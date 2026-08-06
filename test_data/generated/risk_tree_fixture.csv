@@ -1,0 +1,67 @@
+node_type,estimate_type,optimistic,likely,pessimistic,probability,p10_lower,p10_expected,p10_upper,p50_lower,p50_expected,p50_upper,p90_lower,p90_expected,p90_upper,expected_result,expected_error_code,expected_error_reason,level_1,level_2,level_3,level_4
+parent,Cost,,,,,30343587.766745985,30559964.258231904,30729604.25213979,36953468.930828944,37138427.92570782,37260255.62518599,44071792.430091284,44271938.59236136,44595427.441435605,accept,,,Cost-focused programme exposure,,,
+parent,Cost,,,,,1470064.9137643804,1480842.8088838537,1491729.6586234025,1866833.8342432918,1877902.103242713,1890333.149117107,2302438.239232854,2316883.883202915,2330007.507337525,accept,,,,Delivery cost exposure,,
+parent,Cost,,,,,993980.2493563099,1004752.6352569466,1014202.0855293873,1352364.6996478327,1362887.5338880585,1372214.471272843,1754057.0517174879,1766650.8596220221,1780311.4672992504,accept,,,,,Implementation cost drivers,
+leaf,Cost,250000,600000,1400000,,,,,,,,,,,accept,,,,,,Contractor extension
+leaf,Cost,100000,350000,1100000,,,,,,,,,,,accept,,,,,,Integration rework
+leaf,Cost,80000,220000,650000,,,,,,,,,,,accept,,,,,,Testing overrun
+parent,Cost,,,,,339520.5977962809,343219.11367526423,346880.50930313964,499348.86693887785,503493.14942814724,507059.19168212084,692261.3554173579,697413.695372029,703507.1056927034,accept,,,,,Operational readiness cost drivers,
+leaf,Cost,60000,180000,420000,,,,,,,,,,,accept,,,,,,Training rollout
+leaf,Cost,90000,260000,750000,,,,,,,,,,,accept,,,,,,Support transition
+parent,Cost,,,,,28503071.72278645,28684204.31941983,28898668.31580552,35118605.31215867,35243639.817564934,35415666.69587988,42149978.208126694,42347088.52692932,42618194.47122602,accept,,,,Large capital exposure,,
+leaf,Cost,8000000,14000000,26000000,,,,,,,,,,,accept,,,,,Capital works delay,
+leaf,Cost,3500000,7500000,18000000,,,,,,,,,,,accept,,,,,Vendor remediation,
+leaf,Cost,5000000,11000000,22000000,,,,,,,,,,,accept,,,,,Programme extension,
+parent,Benefit,,,,,-4636755.452340905,-4616310.270184744,-4590791.513243656,-3850584.9584959513,-3837572.7488762764,-3819092.656780448,-3120220.570040981,-3096098.4326258833,-3076471.325055943,accept,,,Benefit-focused outcome exposure,,,
+parent,Benefit,,,,,-2460393.6541099106,-2444832.249148882,-2431438.4453778863,-1977844.5589638047,-1964490.0151906435,-1952058.9602370386,-1504081.5090865798,-1495263.9908157047,-1485209.3815463327,accept,,,,Operational benefit exposure,,
+leaf,Benefit,-1200000,-650000,-150000,,,,,,,,,,,accept,,,,,Reduced support burden,
+leaf,Benefit,-900000,-420000,-80000,,,,,,,,,,,accept,,,,,Avoided licence cost,
+leaf,Benefit,-1600000,-850000,-200000,,,,,,,,,,,accept,,,,,Reduced external spend,
+parent,Benefit,,,,,-2516217.4372366755,-2498441.028570722,-2480013.3064141115,-1877535.594588719,-1861455.7763878596,-1846110.2051161586,-1305036.9723378245,-1290958.6564544206,-1277654.5094224748,accept,,,,Productivity benefit exposure,,
+parent,Benefit,,,,,-2200250.223035075,-2181522.2019908903,-2164271.960544676,-1570480.7753233581,-1559072.8410936163,-1544111.4064779282,-1022218.7359970624,-1006492.3415720959,-992757.9208449153,accept,,,,,Staff productivity outcomes,
+leaf,Benefit,-2500000,-1100000,-250000,,,,,,,,,,,accept,,,,,,Workflow automation benefit
+leaf,Benefit,-850000,-350000,-70000,,,,,,,,,,,accept,,,,,,Reduced manual handling
+leaf,Benefit,-650000,-280000,-40000,,,,,,,,,,,accept,,,,,Faster onboarding,
+parent,Risk,,,,,1239474.7888182383,1269109.3898210567,1293240.0967418218,2523018.98295127,2561148.3674061866,2589917.4619151726,4481131.906450498,4544960.494233156,4602205.41944944,accept,,,Risk-focused delivery exposure,,,
+parent,Risk,,,,,913233.9116154915,936345.130278754,958100.895937327,1656888.3167454996,1674841.660643302,1692028.1140106819,2640379.1989668184,2660571.1533115897,2693642.123775809,accept,,,,Supplier risks,,
+leaf,Risk,100000,350000,2500000,0.35,,,,,,,,,,accept,,,,,Vendor delay risk,
+leaf,Risk,500000,1200000,3500000,1.0,,,,,,,,,,accept,,,,,Key supplier issue,
+leaf,Risk,50000,140000,900000,0.2,,,,,,,,,,accept,,,,,Alternative sourcing risk,
+parent,Risk,,,,,0.0,0.0,0.0,710432.2061521246,739433.3177444054,790378.5565131273,2521613.8390838974,2585441.2543594185,2665644.2452682657,accept,,,,Technical risks,,
+parent,Risk,,,,,0.0,0.0,0.0,0.0,0.0,0.0,1926579.2602972575,1981630.0414843457,2048724.6841464806,accept,,,,,Platform stability risks,
+leaf,Risk,200000,600000,4200000,0.28,,,,,,,,,,accept,,,,,,Performance remediation risk
+leaf,Risk,400000,900000,5500000,0.18,,,,,,,,,,accept,,,,,,Security remediation risk
+leaf,Risk,150000,500000,3800000,0.42,,,,,,,,,,accept,,,,,Data migration risk,
+leaf,Risk,100000,220000,1100000,0.0,,,,,,,,,,accept,,,,,Retired risk example,
+parent,Mixed,,,,,87922.71613061726,134374.30533008257,180018.32262602408,1769139.9097495356,1800719.4978202144,1859253.2647316586,4329352.676805223,4452902.412788438,4609634.895675748,accept,,,Mixed portfolio exposure,,,
+parent,Cost,,,,,2048922.0903395407,2069427.3275729357,2100364.6185342097,3148134.983206767,3180972.36762192,3213153.125283428,4508416.923489918,4538154.155104462,4580686.23996106,accept,,,,Portfolio costs,,
+leaf,Cost,800000,2100000,5500000,,,,,,,,,,,accept,,,,,Programme delay cost,
+leaf,Cost,100000,500000,2500000,,,,,,,,,,,accept,,,,,Contingency drawdown,
+leaf,Cost,10000,30000,90000,,,,,,,,,,,accept,,,,,Minor recurring cost,
+parent,Benefit,,,,,-2816607.0467915004,-2785590.66386728,-2761316.8524322975,-1991243.1492390833,-1974135.340088985,-1956619.165823891,-1271493.1686868803,-1256979.9019063218,-1239141.464272999,accept,,,,Portfolio benefits,,
+leaf,Benefit,-3000000,-1200000,-200000,,,,,,,,,,,accept,,,,,Benefit offset,
+leaf,Benefit,-1500000,-600000,-100000,,,,,,,,,,,accept,,,,,Avoided remediation,
+parent,Risk,,,,,-31732.46500771052,-11630.65569844521,0.0,128838.08078224087,156130.6952024581,178203.9998172088,2629413.6972047277,2749810.1305424795,2849741.0022100774,accept,,,,Portfolio risks,,
+leaf,Risk,250000,750000,4500000,0.25,,,,,,,,,,accept,,,,,Regulatory change risk,
+leaf,Risk,-500000,100000,900000,0.45,,,,,,,,,,accept,,,,,Adoption shortfall risk,
+parent,Risk,,,,,0.0,0.0,0.0,0.0,0.0,0.0,1882695.8701311538,2093989.8854750856,2265064.574789769,accept,,,,,Low probability high impact risks,
+leaf,Risk,1000000,2000000,15000000,0.08,,,,,,,,,,accept,,,,,,Major dependency failure
+leaf,Risk,-1000000,500000,8000000,0.12,,,,,,,,,,accept,,,,,,External policy shock
+invalid_leaf,Risk,100000,100000,300000,0.35,,,,,,,,,,reject,LIKELY_EQUALS_OPTIMISTIC,likely must be strictly greater than optimistic,Invalid input cases: likely_equals_optimistic,,,
+invalid_leaf,Risk,100000,300000,300000,0.35,,,,,,,,,,reject,LIKELY_EQUALS_PESSIMISTIC,likely must be strictly less than pessimistic,Invalid input cases: likely_equals_pessimistic,,,
+invalid_leaf,Cost,250000,250000,250000,,,,,,,,,,,reject,OPTIMISTIC_EQUALS_PESSIMISTIC,pessimistic must be greater than optimistic,Invalid input cases: optimistic_equals_pessimistic,,,
+invalid_leaf,Cost,500000,450000,300000,,,,,,,,,,,reject,PESSIMISTIC_LESS_THAN_OPTIMISTIC,pessimistic must be greater than optimistic,Invalid input cases: pessimistic_less_than_optimistic,,,
+invalid_leaf,Benefit,-100000,-150000,300000,,,,,,,,,,,reject,LIKELY_LESS_THAN_OPTIMISTIC,likely must be greater than optimistic,Invalid input cases: likely_less_than_optimistic,,,
+invalid_leaf,Benefit,-100000,450000,300000,,,,,,,,,,,reject,LIKELY_GREATER_THAN_PESSIMISTIC,likely must be less than pessimistic,Invalid input cases: likely_greater_than_pessimistic,,,
+invalid_leaf,Risk,,150000,300000,0.4,,,,,,,,,,reject,MISSING_OPTIMISTIC,optimistic value is missing,Invalid input cases: missing_optimistic,,,
+invalid_leaf,Risk,100000,,300000,0.4,,,,,,,,,,reject,MISSING_LIKELY,likely value is missing,Invalid input cases: missing_likely,,,
+invalid_leaf,Risk,100000,150000,,0.4,,,,,,,,,,reject,MISSING_PESSIMISTIC,pessimistic value is missing,Invalid input cases: missing_pessimistic,,,
+invalid_leaf,Risk,not-a-number,150000,300000,0.4,,,,,,,,,,reject,NON_NUMERIC_OPTIMISTIC,optimistic value is not numeric,Invalid input cases: non_numeric_optimistic,,,
+invalid_leaf,Risk,100000,not-a-number,300000,0.4,,,,,,,,,,reject,NON_NUMERIC_LIKELY,likely value is not numeric,Invalid input cases: non_numeric_likely,,,
+invalid_leaf,Risk,100000,150000,not-a-number,0.4,,,,,,,,,,reject,NON_NUMERIC_PESSIMISTIC,pessimistic value is not numeric,Invalid input cases: non_numeric_pessimistic,,,
+invalid_leaf,Risk,100000,150000,300000,,,,,,,,,,,reject,MISSING_PROBABILITY,Risk probability is required,Invalid input cases: missing_risk_probability,,,
+invalid_leaf,Risk,100000,150000,300000,-0.01,,,,,,,,,,reject,PROBABILITY_LESS_THAN_ZERO,Risk probability must be at least 0,Invalid input cases: risk_probability_less_than_zero,,,
+invalid_leaf,Risk,100000,150000,300000,1.01,,,,,,,,,,reject,PROBABILITY_GREATER_THAN_ONE,Risk probability must be at most 1,Invalid input cases: risk_probability_greater_than_one,,,
+invalid_leaf,Risk,100000,150000,300000,likely,,,,,,,,,,reject,NON_NUMERIC_PROBABILITY,Risk probability must be numeric,Invalid input cases: risk_probability_non_numeric,,,
+invalid_leaf,Cost,100000,150000,300000,0.5,,,,,,,,,,reject,PROBABILITY_NOT_ALLOWED,Probability must be blank for Cost and Benefit leaves,Invalid input cases: cost_probability_populated,,,
+invalid_leaf,Benefit,-300000,-150000,-50000,0.5,,,,,,,,,,reject,PROBABILITY_NOT_ALLOWED,Probability must be blank for Cost and Benefit leaves,Invalid input cases: benefit_probability_populated,,,
