@@ -1,0 +1,1 @@
+Better project estimates through Wisdom of the Crowd. This code collects one to many 3-point estimates for each unknown quantity, plus a probability in the case of Risks, and aggregates them up in a tree structure using Monte Carlo Simulation.
