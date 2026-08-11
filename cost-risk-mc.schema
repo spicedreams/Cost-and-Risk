@@ -1,0 +1,108 @@
+```
+PRAGMA foreign_keys = ON;
+
+-- ==========================================
+-- 1. UNIFIED FINANCIAL HIERARCHY
+-- ==========================================
+CREATE TABLE financial_elements (
+    id TEXT PRIMARY KEY,                           -- UUID
+    parent_id TEXT,                                
+    element_type TEXT NOT NULL                     
+        CHECK(element_type IN ('Cost', 'Benefit', 'Risk', 'Issue', 'Residual', 'Treatment_Cost')),
+    title TEXT NOT NULL,
+    description TEXT,
+    
+    -- 3-Point Estimates & Probabilities 
+    min_val REAL,
+    likely_val REAL,
+    max_val REAL,
+    probability REAL DEFAULT 100.0                 
+        CHECK(probability >= 0 AND probability <= 100),
+    
+    -- Standard Metadata
+    owner_sme TEXT NOT NULL,
+    updated_by TEXT NOT NULL,                      
+    last_update DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (parent_id) REFERENCES financial_elements(id) ON DELETE RESTRICT
+);
+
+-- ==========================================
+-- 2. TREATMENTS MAPPING TABLE (Risks & Issues)
+-- ==========================================
+CREATE TABLE treatments (
+    treatment_id TEXT PRIMARY KEY,                 -- UUID
+    baseline_id TEXT NOT NULL,                     -- The original Risk or Issue being treated
+    treatment_cost_id TEXT NOT NULL,               -- The cost of the intervention
+    residual_id TEXT NOT NULL,                     -- The remaining risk/issue profile
+    
+    -- Metadata
+    updated_by TEXT NOT NULL,
+    last_update DATETIME DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (baseline_id) REFERENCES financial_elements(id) ON DELETE RESTRICT,
+    FOREIGN KEY (treatment_cost_id) REFERENCES financial_elements(id) ON DELETE CASCADE,
+    FOREIGN KEY (residual_id) REFERENCES financial_elements(id) ON DELETE CASCADE
+);
+
+-- ==========================================
+-- 3. AUDIT LOG
+-- ==========================================
+CREATE TABLE audit_log (
+    log_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    action TEXT NOT NULL 
+        CHECK(action IN ('INSERT', 'UPDATE', 'DELETE')),
+    item_id TEXT NOT NULL,                         
+    parent_id TEXT,                                
+    updated_by TEXT NOT NULL,                      -- Aligned naming convention                  
+    what TEXT NOT NULL                             
+);
+
+-- ==========================================
+-- 4. AUTOMATED AUDIT TRIGGERS
+-- ==========================================
+
+-- Trigger: Log INSERTs
+CREATE TRIGGER trg_fin_elements_insert
+AFTER INSERT ON financial_elements
+BEGIN
+    INSERT INTO audit_log (action, item_id, parent_id, updated_by, what)
+    VALUES (
+        'INSERT', 
+        NEW.id, 
+        NEW.parent_id, 
+        NEW.updated_by, 
+        'Created ' || NEW.element_type || ': ' || NEW.title
+    );
+END;
+
+-- Trigger: Log UPDATEs
+CREATE TRIGGER trg_fin_elements_update
+AFTER UPDATE ON financial_elements
+BEGIN
+    INSERT INTO audit_log (action, item_id, parent_id, updated_by, what)
+    VALUES (
+        'UPDATE', 
+        NEW.id, 
+        NEW.parent_id, 
+        NEW.updated_by, 
+        'Updated ' || NEW.element_type || ': ' || NEW.title
+    );
+END;
+
+-- Trigger: Log DELETEs
+-- Note: Uses OLD.updated_by as the recorded user, representing the last person who touched the record before deletion.
+CREATE TRIGGER trg_fin_elements_delete
+AFTER DELETE ON financial_elements
+BEGIN
+    INSERT INTO audit_log (action, item_id, parent_id, updated_by, what)
+    VALUES (
+        'DELETE', 
+        OLD.id, 
+        OLD.parent_id, 
+        OLD.updated_by, 
+        'Deleted ' || OLD.element_type || ': ' || OLD.title
+    );
+END;
+```"
