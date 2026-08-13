@@ -31,7 +31,35 @@ generate_id <- function() {
   paste0(sample(c(letters, 0:9), 16, replace = TRUE), collapse = "")
 }
 
-build_nested_tree <- function(df, parent = NA, focus_id = NULL) {
+extract_opened_ids <- function(tree) {
+  opened <- c()
+  if (is.list(tree) && length(tree) > 0) {
+    for (name in names(tree)) {
+      node <- tree[[name]]
+      
+      ststate <- attr(node, "ststate")
+      stclass <- attr(node, "stclass")
+      
+      is_open <- FALSE
+      if (!is.null(ststate) && isTRUE(ststate$opened)) {
+        is_open <- TRUE
+      } else if (isTRUE(attr(node, "stopened"))) {
+        is_open <- TRUE
+      }
+      
+      if (is_open && !is.null(stclass)) {
+        node_id <- sub(" inactive-node", "", stclass)
+        node_id <- sub("^node_", "", node_id)
+        opened <- c(opened, node_id)
+      }
+      
+      opened <- c(opened, extract_opened_ids(node))
+    }
+  }
+  return(opened)
+}
+
+build_nested_tree <- function(df, parent = NA, focus_id = NULL, opened_ids = NULL, ancestor_ids = NULL) {
   if (is.na(parent)) {
     children <- df[is.na(df$parent_id) | df$parent_id == "", ]
   } else {
@@ -43,18 +71,37 @@ build_nested_tree <- function(df, parent = NA, focus_id = NULL) {
   res <- list()
   for (i in 1:nrow(children)) {
     node_name <- children$title[i]
-    child_node <- build_nested_tree(df, children$id[i], focus_id)
+    node_id <- children$id[i]
+    el_type <- children$element_type[i]
     
-    attr(child_node, "stopened") <- TRUE 
+    child_node <- build_nested_tree(df, node_id, focus_id, opened_ids, ancestor_ids)
     
-    is_active <- ifelse(is.na(children$is_active[i]), 1, children$is_active[i])
-    if (children$element_type[i] == "Treatment" && is_active == 0) {
-      attr(child_node, "stclass") <- paste0("node_", children$id[i], " inactive-node")
+    if (is.null(opened_ids)) {
+      attr(child_node, "stopened") <- TRUE 
     } else {
-      attr(child_node, "stclass") <- paste0("node_", children$id[i]) 
+      attr(child_node, "stopened") <- (node_id %in% opened_ids) || (node_id %in% ancestor_ids)
     }
     
-    if (!is.null(focus_id) && children$id[i] == focus_id) {
+    is_active <- ifelse(is.na(children$is_active[i]), 1, children$is_active[i])
+    if (el_type == "Treatment" && is_active == 0) {
+      attr(child_node, "stclass") <- paste0("node_", node_id, " inactive-node")
+    } else {
+      attr(child_node, "stclass") <- paste0("node_", node_id) 
+    }
+    
+    # Assign icon based on Element Type
+    icon_class <- switch(el_type,
+                         "Cost" = "fa fa-tags",
+                         "Risk" = "fa fa-exclamation-triangle",
+                         "Issue" = "fa fa-fire",
+                         "Benefit" = "fa fa-gift",
+                         "Treatment" = "fa fa-medkit",
+                         "Residual" = "fa fa-filter",
+                         "fa fa-folder") # fallback
+    
+    attr(child_node, "sticon") <- icon_class
+    
+    if (!is.null(focus_id) && node_id == focus_id) {
       attr(child_node, "stselected") <- TRUE
     }
     
@@ -64,11 +111,19 @@ build_nested_tree <- function(df, parent = NA, focus_id = NULL) {
 }
 
 find_selected_node <- function(tree) {
-  if (isTRUE(attr(tree, "stselected"))) return(sub(" inactive-node", "", attr(tree, "stclass")))
+  if (isTRUE(attr(tree, "stselected"))) {
+    # 2026-08-14T1039+12:00 - Strip 'node_' prefix to return correct DB ID so node details load and edit dialogs populate
+    val <- sub(" inactive-node", "", attr(tree, "stclass"))
+    return(sub("^node_", "", val)) 
+  }
   if (is.list(tree)) {
     for (i in seq_along(tree)) {
       res <- find_selected_node(tree[[i]])
-      if (!is.null(res)) return(sub(" inactive-node", "", res))
+      if (!is.null(res)) {
+        # 2026-08-14T1039+12:00 - Strip 'node_' prefix to return correct DB ID so node details load and edit dialogs populate
+        val <- sub(" inactive-node", "", res)
+        return(sub("^node_", "", val))
+      }
     }
   }
   return(NULL)
@@ -86,15 +141,12 @@ generate_report <- function(df, n_iter = 10000, seed_val = NULL) {
     is_leaf <- ifelse(is.na(node$is_leaf), 0, node$is_leaf) == 1
     is_active <- ifelse(is.na(node$is_active), 1, node$is_active)
     
+    is_treatment <- node$element_type == "Treatment" || grepl("treatment", tolower(node$title))
+    
     mc_array <- rep(0, n_iter)
     child_rows <- list()
     
-    if (node$element_type == "Treatment" && is_active == 0) {
-      for (i in seq_len(nrow(children))) {
-        c_res <- traverse(children$id[i], level + 1)
-        child_rows <- c(child_rows, c_res$rows)
-      }
-    } else if (nrow(children) == 0) {
+    if (nrow(children) == 0) {
       if (is_leaf && !is.na(node$opt_val) && !is.na(node$likely_val) && !is.na(node$pess_val)) {
         calc_min <- min(c(node$opt_val, node$likely_val, node$pess_val), na.rm = TRUE)
         calc_max <- max(c(node$opt_val, node$likely_val, node$pess_val), na.rm = TRUE)
@@ -139,7 +191,8 @@ generate_report <- function(df, n_iter = 10000, seed_val = NULL) {
       Level = level, Title = node$title
     )
     
-    return(list(rows = c(list(row_data), child_rows), mc_array = mc_array))
+    return_mc_array <- if (is_treatment) rep(0, n_iter) else mc_array
+    return(list(rows = c(list(row_data), child_rows), mc_array = return_mc_array))
   }
   
   roots <- df[is.na(df$parent_id) | df$parent_id == "", ]
@@ -149,13 +202,15 @@ generate_report <- function(df, n_iter = 10000, seed_val = NULL) {
   }
   
   out_df <- do.call(rbind, lapply(all_rows, as.data.frame, stringsAsFactors = FALSE))
-  max_lvl <- max(out_df$Level)
-  for (lvl in 1:max_lvl) {
+  
+  for (lvl in 1:8) {
     col_name <- paste0("L", lvl)
     out_df[[col_name]] <- ifelse(out_df$Level == lvl, out_df$Title, "")
   }
-  out_df$Level <- NULL
-  out_df$Title <- NULL
+  
+  col_order <- c("Element_Type", "Active", paste0("L", 1:8), "Leaf_Opt", "Leaf_Likely", "Leaf_Pess", "Leaf_Prob", "Rollup_MC_P10", "Rollup_MC_P50", "Rollup_MC_P90", "Updated")
+  out_df <- out_df[, col_order]
+  
   return(out_df)
 }
 
@@ -185,6 +240,16 @@ ui <- fluidPage(
         if (pastedText) {
           Shiny.setInputValue('pasted_owner_estimates', pastedText, {priority: 'event'});
           e.preventDefault(); 
+        }
+      });
+      $(document).on('paste', '#new_title', function(e) {
+        let pastedText = (e.originalEvent || e).clipboardData.getData('text');
+        if (pastedText && pastedText.indexOf('\\t') !== -1) {
+          e.preventDefault();
+          let firstVal = pastedText.split('\\t')[0].trim();
+          let el = $(this);
+          el.val(firstVal);
+          el.trigger('input'); 
         }
       });
     "))
@@ -274,7 +339,8 @@ server <- function(input, output, session) {
     mc_results = NULL, 
     db_path = NULL,
     current_leaf_state = FALSE, 
-    focus_node_id = NULL
+    focus_node_id = NULL,
+    force_open_all = TRUE 
   )
   
   sqlite_files <- list.files(pattern = "\\.sqlite$")
@@ -313,14 +379,14 @@ server <- function(input, output, session) {
   
   trigger_refresh <- reactiveVal(0)
   selected_node_id <- reactiveVal(NULL)
-  
   browse_dir <- reactiveVal(getwd())
   
   output$current_db_display <- renderText({
     req(rv$db_path)
     paste("Active DB:", basename(rv$db_path))
   })
-  
+
+  # --- DB BROWSER RESTORED ---
   observeEvent(input$project_db_select, {
     showModal(modalDialog(
       title = "Select Project Database",
@@ -459,13 +525,8 @@ server <- function(input, output, session) {
     trigger_refresh(trigger_refresh() + 1)
     removeModal()
   })
-  
-  shinyjs::hide("treatment_active_container")
-  
-  observeEvent(input$use_seed, {
-    if (input$use_seed) shinyjs::enable("seed_val") else shinyjs::disable("seed_val")
-  })
-  
+
+  # --- COPY-PASTE ESTIMATE RESTORED ---
   observeEvent(input$pasted_estimates, {
     txt <- input$pasted_estimates
     parts <- strsplit(txt, "\t")[[1]]
@@ -487,12 +548,10 @@ server <- function(input, output, session) {
       if (!is.null(v_lik)) updateAutonumericInput(session, "est_likely", value = v_lik)
       if (!is.null(v_pes)) updateAutonumericInput(session, "est_pess", value = v_pes)
       
-      # === BEGIN NEW CODE: FIXED PROBABILITY PASTE (< TO <=) ===
       if (!is.null(v_chn)) {
         if (v_chn > 0 && v_chn <= 1) v_chn <- v_chn * 100
         updateNumericInput(session, "est_chance", value = v_chn)
       }
-      # === END NEW CODE ===
     }
   })
   
@@ -521,7 +580,6 @@ server <- function(input, output, session) {
         v_pes <- clean_val(parts[4])
         if (!is.null(v_pes)) updateAutonumericInput(session, "est_pess", value = v_pes)
       }
-      # === BEGIN NEW CODE: FIXED PROBABILITY PASTE (< TO <=) ===
       if (length(parts) >= 5) {
         v_chn <- clean_val(parts[5])
         if (!is.null(v_chn)) {
@@ -529,129 +587,148 @@ server <- function(input, output, session) {
           updateNumericInput(session, "est_chance", value = v_chn)
         }
       }
-      # === END NEW CODE ===
     } else {
       updateTextInput(session, "est_owner", value = txt)
     }
   })
   
+# Tree Rendering
   output$wbs_tree <- renderTree({
     trigger_refresh()
+    req(rv$db_path)
     con <- get_db()
-    df <- dbGetQuery(con, "SELECT * FROM financial_elements")
+    df <- dbGetQuery(con, "SELECT id, parent_id, element_type, title, is_active FROM financial_elements")
     dbDisconnect(con)
     
-    if (nrow(df) == 0) return(list("Error: Master node missing" = ""))
-    build_nested_tree(df, focus_id = rv$focus_node_id)
+    if (nrow(df) == 0) return(list())
+    
+    # 2026-08-14T11:05+12:00 - Isolate reactive dependencies to prevent the tree from rebuilding on every click, which breaks subsequent selections.
+    isolate({
+      opened_ids <- if (rv$force_open_all) df$id else extract_opened_ids(input$wbs_tree)
+      if (rv$force_open_all) rv$force_open_all <- FALSE 
+      
+      if (!is.null(rv$focus_node_id) && !(rv$focus_node_id %in% opened_ids)) {
+        opened_ids <- c(opened_ids, rv$focus_node_id)
+      }
+      
+      ancestors_to_open <- c()
+      if (!is.null(rv$focus_node_id)) {
+        curr <- rv$focus_node_id
+        while (!is.null(curr) && curr != "" && !is.na(curr)) {
+          p_idx <- match(curr, df$id)
+          if (is.na(p_idx)) break
+          p_id <- df$parent_id[p_idx]
+          if (!is.na(p_id) && p_id != "") ancestors_to_open <- c(ancestors_to_open, p_id)
+          curr <- p_id
+        }
+      }
+      
+      tree_data <- build_nested_tree(df, parent = NA, focus_id = rv$focus_node_id, opened_ids = opened_ids, ancestor_ids = ancestors_to_open)
+    })
+    
+    return(tree_data)
   })
-  
-  update_right_pane <- function(resolved_id) {
-    con <- get_db()
-    node_data <- dbGetQuery(con, "SELECT * FROM financial_elements WHERE id = ?", params = list(resolved_id))
-    
-    if (nrow(node_data) > 0) {
-      selected_node_id(node_data$id[1])
-      
-      if (node_data$element_type[1] %in% c("Cost", "Benefit")) {
-        shinyjs::hide("prob_container")
-      } else {
-        shinyjs::show("prob_container")
-      }
-      
-      if (node_data$element_type[1] == "Treatment") {
-        shinyjs::show("treatment_active_container")
-        updateCheckboxInput(session, "chk_active_treatment", value = as.logical(ifelse(is.na(node_data$is_active[1]), 1, node_data$is_active[1])))
-      } else {
-        shinyjs::hide("treatment_active_container")
-      }
-      
-      child_count <- dbGetQuery(con, "SELECT COUNT(*) as n FROM financial_elements WHERE parent_id = ?", params = list(node_data$id[1]))$n
-      is_leaf_flag <- ifelse(is.na(node_data$is_leaf[1]), 0, node_data$is_leaf[1])
-      
-      rv$current_leaf_state <- as.logical(is_leaf_flag)
-      
-      if (child_count > 0) {
-        updateCheckboxInput(session, "is_leaf_check", value = FALSE)
-        shinyjs::disable("is_leaf_check")
-        shinyjs::disable("est_fieldset")
-      } else {
-        shinyjs::enable("is_leaf_check")
-        updateCheckboxInput(session, "is_leaf_check", value = as.logical(is_leaf_flag))
-        if (is_leaf_flag == 1) shinyjs::enable("est_fieldset") else shinyjs::disable("est_fieldset")
-      }
-      
-      updateTextInput(session, "est_owner", value = ifelse(is.na(node_data$owner[1]), "", node_data$owner[1]))
-      updateAutonumericInput(session, "est_opt", value = ifelse(is.na(node_data$opt_val[1]), "", node_data$opt_val[1]))
-      updateAutonumericInput(session, "est_likely", value = ifelse(is.na(node_data$likely_val[1]), "", node_data$likely_val[1]))
-      updateAutonumericInput(session, "est_pess", value = ifelse(is.na(node_data$pess_val[1]), "", node_data$pess_val[1]))
-      updateNumericInput(session, "est_chance", value = ifelse(is.na(node_data$chance[1]), 100, node_data$chance[1]))
-    }
-    dbDisconnect(con)
-  }
-  
+
+  # Node Selection Logic
   observeEvent(input$wbs_tree, {
-    sel_class <- find_selected_node(input$wbs_tree)
+    req(input$wbs_tree)
+    sel_id <- find_selected_node(input$wbs_tree)
     
-    if (!is.null(sel_class)) {
-      resolved_id <- sub("^node_", "", sel_class)
-      if (!is.null(rv$focus_node_id) && resolved_id == rv$focus_node_id) { rv$focus_node_id <- NULL }
-      update_right_pane(resolved_id)
+    if (!is.null(sel_id) && length(sel_id) > 0) {
+      if (is.null(selected_node_id()) || sel_id != selected_node_id()) {
+        selected_node_id(sel_id)
+        rv$focus_node_id <- sel_id
+        
+        con <- get_db()
+        node_data <- dbGetQuery(con, "SELECT * FROM financial_elements WHERE id = ?", params = list(sel_id))
+        dbDisconnect(con)
+        
+        if (nrow(node_data) > 0) {
+          is_leaf_val <- ifelse(is.na(node_data$is_leaf[1]), 0, node_data$is_leaf[1]) == 1
+          rv$current_leaf_state <- is_leaf_val
+          updateCheckboxInput(session, "is_leaf_check", value = is_leaf_val)
+          
+          shinyjs::enable("is_leaf_check")
+          if (is_leaf_val) {
+            shinyjs::enable("est_fieldset")
+          } else {
+            shinyjs::disable("est_fieldset")
+          }
+          
+          if (node_data$element_type[1] == "Treatment") {
+            shinyjs::show("treatment_active_container")
+            updateCheckboxInput(session, "chk_active_treatment", value = ifelse(is.na(node_data$is_active[1]), 1, node_data$is_active[1]) == 1)
+          } else {
+            shinyjs::hide("treatment_active_container")
+          }
+          
+          updateAutonumericInput(session, "est_opt", value = node_data$opt_val[1])
+          updateAutonumericInput(session, "est_likely", value = node_data$likely_val[1])
+          updateAutonumericInput(session, "est_pess", value = node_data$pess_val[1])
+          updateNumericInput(session, "est_chance", value = ifelse(is.na(node_data$chance[1]), 100, node_data$chance[1]))
+          updateTextInput(session, "est_owner", value = ifelse(is.na(node_data$owner[1]), "", node_data$owner[1]))
+        }
+      }
     } else {
       selected_node_id(NULL)
-      rv$current_leaf_state <- FALSE
-      updateCheckboxInput(session, "is_leaf_check", value = FALSE)
       shinyjs::disable("is_leaf_check")
       shinyjs::disable("est_fieldset")
       shinyjs::hide("treatment_active_container")
     }
-  })
-  
-  observeEvent(input$chk_active_treatment, {
-    req(selected_node_id())
-    con <- get_db()
-    is_active_val <- ifelse(input$chk_active_treatment, 1, 0)
-    
-    dbExecute(con, "UPDATE financial_elements SET is_active = ? WHERE id = ?", params = list(is_active_val, selected_node_id()))
-    
-    if (is_active_val == 1) {
-      node_info <- dbGetQuery(con, "SELECT parent_id FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
-      parent_id <- node_info$parent_id[1]
-      
-      if (!is.na(parent_id) && parent_id != "") {
-        dbExecute(con, "UPDATE financial_elements SET is_active = 0 WHERE parent_id = ? AND element_type = 'Treatment' AND id != ?", params = list(parent_id, selected_node_id()))
-      }
-    }
-    
-    dbDisconnect(con)
-    trigger_refresh(trigger_refresh() + 1)
-  })
-  
-  observeEvent(input$is_leaf_check, {
-    req(selected_node_id())
-    ui_is_leaf <- as.logical(input$is_leaf_check)
-    
-    if (ui_is_leaf == rv$current_leaf_state) return() 
-    rv$current_leaf_state <- ui_is_leaf 
-    
-    if (ui_is_leaf) {
-      con <- get_db()
-      update_time <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-      dbExecute(con, "UPDATE financial_elements SET is_leaf = 1, updated_at = ? WHERE id = ?", params = list(update_time, selected_node_id()))
-      dbDisconnect(con)
-      shinyjs::enable("est_fieldset")
-      trigger_refresh(trigger_refresh() + 1)
-    } else {
-      showModal(modalDialog(
-        title = "Remove Leaf Status?",
-        "Unchecking this will permanently clear all estimates for this node. Are you sure?",
-        footer = tagList(
-          actionButton("confirm_uncheck", "Yes, clear estimates", class = "btn-danger"),
-          actionButton("cancel_uncheck", "Cancel")
-        )
-      ))
-    }
   }, ignoreInit = TRUE)
   
+  output$header_title <- renderText({
+    if (is.null(selected_node_id())) return("Node Estimate: None Selected")
+    con <- get_db()
+    title <- dbGetQuery(con, "SELECT title FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$title
+    dbDisconnect(con)
+    paste("Node Estimate:", title)
+  })
+  
+  output$meta_id <- renderText({ selected_node_id() })
+  
+  output$meta_type <- renderText({
+    if (is.null(selected_node_id())) return("")
+    con <- get_db()
+    type <- dbGetQuery(con, "SELECT element_type FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$element_type
+    dbDisconnect(con)
+    type
+  })
+  
+  output$meta_updated <- renderText({
+    if (is.null(selected_node_id())) return("")
+    con <- get_db()
+    upd <- dbGetQuery(con, "SELECT updated_at FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$updated_at
+    dbDisconnect(con)
+    if (is.na(upd) || upd == "") return("Last Updated: Never")
+    paste("Last Updated:", upd)
+  })
+  
+  # --- SAFE LEAF DELETION LOGIC RESTORED ---
+  observeEvent(input$is_leaf_check, {
+    req(selected_node_id())
+    if (input$is_leaf_check != rv$current_leaf_state) {
+      if (!input$is_leaf_check) {
+        # Unchecking a leaf node clears its estimates
+        showModal(modalDialog(
+          title = "Remove Leaf Status?",
+          "Unchecking this will remove leaf status and clear all estimates. Continue?",
+          footer = tagList(
+            actionButton("confirm_uncheck", "Yes, clear estimates", class = "btn-danger"),
+            actionButton("cancel_uncheck", "Cancel")
+          )
+        ))
+      } else {
+        # Simply checking it
+        rv$current_leaf_state <- TRUE
+        con <- get_db()
+        dbExecute(con, "UPDATE financial_elements SET is_leaf = 1 WHERE id = ?", params = list(selected_node_id()))
+        dbDisconnect(con)
+        shinyjs::enable("est_fieldset")
+      }
+    }
+  }, ignoreInit = TRUE)
+
   observeEvent(input$cancel_uncheck, {
     removeModal()
     rv$current_leaf_state <- TRUE 
@@ -665,6 +742,7 @@ server <- function(input, output, session) {
     dbExecute(con, "UPDATE financial_elements SET is_leaf = 0, opt_val = NULL, likely_val = NULL, pess_val = NULL, chance = 100, owner = NULL, updated_at = ? WHERE id = ?", params = list(update_time, selected_node_id()))
     dbDisconnect(con)
     
+    rv$current_leaf_state <- FALSE
     updateTextInput(session, "est_owner", value = "")
     updateAutonumericInput(session, "est_opt", value = "")
     updateAutonumericInput(session, "est_likely", value = "")
@@ -673,130 +751,72 @@ server <- function(input, output, session) {
     shinyjs::disable("est_fieldset")
     trigger_refresh(trigger_refresh() + 1)
   })
-  
-  output$header_title <- renderText({
-    trigger_refresh()
-    if (is.null(selected_node_id())) return("Node Estimate")
-    con <- get_db()
-    title <- dbGetQuery(con, "SELECT title FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$title
-    dbDisconnect(con)
-    paste("Node Estimate:", ifelse(title == "", "(Blank Node)", title))
-  })
-  
-  output$meta_id <- renderText({ if (is.null(selected_node_id())) "N/A" else selected_node_id() })
-  output$meta_type <- renderText({ 
-    if (is.null(selected_node_id())) return("N/A")
-    con <- get_db()
-    type <- dbGetQuery(con, "SELECT element_type FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$element_type
-    dbDisconnect(con)
-    type
-  })
-  
-  output$meta_updated <- renderText({
-    trigger_refresh()
-    if (is.null(selected_node_id())) return("")
-    con <- get_db()
-    upd <- dbGetQuery(con, "SELECT updated_at FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$updated_at
-    dbDisconnect(con)
-    if (is.na(upd) || upd == "") return("Not saved yet")
-    paste("Last Updated:", upd)
-  })
-  
-  output$node_mini_plot <- renderPlot({
-    trigger_refresh() 
+
+  # --- CASCADING TREATMENT DEACTIVATION RESTORED ---
+  observeEvent(input$chk_active_treatment, {
     req(selected_node_id())
-    
     con <- get_db()
-    node_data <- dbGetQuery(con, "SELECT element_type, opt_val, likely_val, pess_val, chance FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
+    el_type <- dbGetQuery(con, "SELECT element_type FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$element_type
+    
+    if (length(el_type) > 0 && el_type == "Treatment") {
+      new_val <- ifelse(input$chk_active_treatment, 1, 0)
+      dbExecute(con, "UPDATE financial_elements SET is_active = ? WHERE id = ?", params = list(new_val, selected_node_id()))
+      
+      # Cascading Deactivation Downwards
+      if (new_val == 0) {
+        ids_to_update <- c()
+        current_parents <- c(selected_node_id())
+        while(length(current_parents) > 0) {
+          placeholders <- paste(rep("?", length(current_parents)), collapse=",")
+          q <- sprintf("SELECT id, element_type FROM financial_elements WHERE parent_id IN (%s)", placeholders)
+          kids <- dbGetQuery(con, q, params = as.list(current_parents))
+          if (nrow(kids) > 0) {
+            trt_kids <- kids$id[kids$element_type == "Treatment"]
+            ids_to_update <- c(ids_to_update, trt_kids)
+            current_parents <- kids$id
+          } else {
+            current_parents <- c()
+          }
+        }
+        if (length(ids_to_update) > 0) {
+          placeholders <- paste(rep("?", length(ids_to_update)), collapse=",")
+          dbExecute(con, sprintf("UPDATE financial_elements SET is_active = 0 WHERE id IN (%s)", placeholders), params = as.list(ids_to_update))
+        }
+      }
+      
+      trigger_refresh(trigger_refresh() + 1)
+    }
     dbDisconnect(con)
-    
-    if (nrow(node_data) == 0 || is.na(node_data$opt_val[1]) || is.na(node_data$likely_val[1]) || is.na(node_data$pess_val[1])) {
-      return(NULL)
-    }
-    
-    n_iter <- 10000 
-    
-    calc_min <- min(c(node_data$opt_val[1], node_data$likely_val[1], node_data$pess_val[1]), na.rm = TRUE)
-    calc_max <- max(c(node_data$opt_val[1], node_data$likely_val[1], node_data$pess_val[1]), na.rm = TRUE)
-    calc_likely <- median(c(node_data$opt_val[1], node_data$likely_val[1], node_data$pess_val[1]), na.rm = TRUE)
-    prob_decimal <- ifelse(is.na(node_data$chance[1]), 1, node_data$chance[1] / 100)
-    
-    sev <- rpert(n_iter, calc_min, calc_likely, calc_max)
-    occ <- rbinom(n_iter, size = 1, prob = prob_decimal)
-    
-    val_mult <- ifelse(node_data$element_type[1] == "Benefit", -1, 1)
-    mc_array <- sev * occ * val_mult
-    
-    plot_df <- data.frame(Value = mc_array)
-    
-    if (node_data$element_type[1] %in% c("Risk", "Issue") && prob_decimal < 1) {
-      plot_df <- plot_df[plot_df$Value != 0, , drop = FALSE]
-    }
-    
-    if (nrow(plot_df) == 0) return(NULL)
-    
-    ggplot(plot_df, aes(x = Value)) +
-      geom_histogram(fill = "#18bc9c", color = "white", bins = 40) +
-      scale_x_continuous(labels = scales::dollar_format(scale_cut = scales::cut_short_scale())) +
-      theme_minimal() + 
-      theme(
-        axis.title = element_blank(), 
-        axis.text.y = element_blank(), 
-        axis.ticks.y = element_blank(), 
-        panel.grid.major.y = element_blank(),
-        panel.grid.minor.y = element_blank(),
-        plot.margin = margin(0, 0, 0, 0, "pt")
-      )
-  })
+  }, ignoreInit = TRUE)
   
+  # --- ROBUST SAVE ESTIMATE RESTORED ---
   observeEvent(input$btn_save_est, {
     req(selected_node_id())
-    owner_val <- trimws(input$est_owner)
-    if (owner_val == "") { showNotification("Owner name cannot be blank.", type = "error"); return() }
     
-    val_chance <- input$est_chance
-    # === BEGIN NEW CODE: ALLOW 1 TO MULTIPLY TO 100 IN SAVE VALIDATION ===
-    if (!is.null(val_chance) && !is.na(val_chance) && val_chance > 0 && val_chance <= 1) {
-      val_chance <- val_chance * 100
-      updateNumericInput(session, "est_chance", value = val_chance)
-    }
-    # === END NEW CODE ===
-    
-    con <- get_db()
-    node_info <- dbGetQuery(con, "SELECT title, parent_id FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
-    node_title <- node_info$title[1]
-    parent_id <- node_info$parent_id[1]
-    
-    existing <- dbGetQuery(con, "SELECT id FROM financial_elements WHERE title = ? AND owner = ? AND id != ?", params = list(node_title, owner_val, selected_node_id()))
-    if (nrow(existing) > 0) {
-      dbDisconnect(con)
-      showNotification("An estimate for this Element Title by this Owner already exists.", type = "error")
+    if (trimws(input$est_owner) == "") {
+      showNotification("Owner Name is required.", type = "error")
       return()
     }
     
-    parent_info <- dbGetQuery(con, "SELECT title FROM financial_elements WHERE id = ?", params = list(parent_id))
-    new_title <- paste(owner_val, "-", parent_info$title[1])
-    
-    val_opt <- if (is.null(input$est_opt) || input$est_opt == "") NA else as.numeric(input$est_opt)
-    val_lik <- if (is.null(input$est_likely) || input$est_likely == "") NA else as.numeric(input$est_likely)
-    val_pes <- if (is.null(input$est_pess) || input$est_pess == "") NA else as.numeric(input$est_pess)
-    
+    con <- get_db()
     update_time <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    dbExecute(con, "UPDATE financial_elements SET opt_val=?, likely_val=?, pess_val=?, chance=?, owner=?, updated_at=?, title=? WHERE id=?", 
-              params = list(val_opt, val_lik, val_pes, val_chance, owner_val, update_time, new_title, selected_node_id()))
+    dbExecute(con, "UPDATE financial_elements SET opt_val = ?, likely_val = ?, pess_val = ?, chance = ?, owner = ?, updated_at = ? WHERE id = ?", 
+              params = list(input$est_opt, input$est_likely, input$est_pess, input$est_chance, trimws(input$est_owner), update_time, selected_node_id()))
+    
+    # Check parent ID to automatically focus parent node on success
+    parent_id <- dbGetQuery(con, "SELECT parent_id FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$parent_id
     dbDisconnect(con)
     
-    # === BEGIN NEW CODE: FOCUS PARENT NODE AFTER SAVE ===
+    showNotification("Estimates saved successfully", type = "message")
+    output$meta_updated <- renderText({ paste("Last Updated:", update_time) })
+    
     if (!is.na(parent_id) && parent_id != "") {
       rv$focus_node_id <- parent_id
-      update_right_pane(parent_id)
+      trigger_refresh(trigger_refresh() + 1)
     }
-    # === END NEW CODE ===
-    
-    trigger_refresh(trigger_refresh() + 1)
-    showNotification("Estimates Saved to Database", type = "message")
   })
-  
+
+  # --- CRUD OPERATIONS RESTORED ---
   observeEvent(input$btn_edit_node, {
     if (is.null(selected_node_id())) { showNotification("Please select a node to edit.", type = "warning"); return() }
     con <- get_db()
@@ -845,7 +865,6 @@ server <- function(input, output, session) {
     removeModal()
     trigger_refresh(trigger_refresh() + 1)
     
-    update_right_pane(selected_node_id())
     showNotification("Node updated.", type = "message")
   })
   
@@ -956,9 +975,61 @@ server <- function(input, output, session) {
     
     rv$focus_node_id <- new_id
     trigger_refresh(trigger_refresh() + 1)
-    update_right_pane(new_id) 
     
     shinyjs::runjs("setTimeout(function() { $('#is_leaf_check').focus(); }, 800);")
+  })
+
+  # --- NODE MINI PLOT RESTORED ---
+  output$node_mini_plot <- renderPlot({
+    trigger_refresh() 
+    req(selected_node_id())
+    
+    con <- get_db()
+    node_data <- dbGetQuery(con, "SELECT element_type, opt_val, likely_val, pess_val, chance FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
+    dbDisconnect(con)
+    
+    if (nrow(node_data) == 0 || is.na(node_data$opt_val[1]) || is.na(node_data$likely_val[1]) || is.na(node_data$pess_val[1])) {
+      return(NULL)
+    }
+    
+    n_iter <- 10000 
+    
+    calc_min <- min(c(node_data$opt_val[1], node_data$likely_val[1], node_data$pess_val[1]), na.rm = TRUE)
+    calc_max <- max(c(node_data$opt_val[1], node_data$likely_val[1], node_data$pess_val[1]), na.rm = TRUE)
+    calc_likely <- median(c(node_data$opt_val[1], node_data$likely_val[1], node_data$pess_val[1]), na.rm = TRUE)
+    prob_decimal <- ifelse(is.na(node_data$chance[1]), 1, node_data$chance[1] / 100)
+    
+    sev <- rpert(n_iter, calc_min, calc_likely, calc_max)
+    occ <- rbinom(n_iter, size = 1, prob = prob_decimal)
+    
+    val_mult <- ifelse(node_data$element_type[1] == "Benefit", -1, 1)
+    mc_array <- sev * occ * val_mult
+    
+    plot_df <- data.frame(Value = mc_array)
+    
+    if (node_data$element_type[1] %in% c("Risk", "Issue") && prob_decimal < 1) {
+      plot_df <- plot_df[plot_df$Value != 0, , drop = FALSE]
+    }
+    
+    if (nrow(plot_df) == 0) return(NULL)
+    
+    ggplot(plot_df, aes(x = Value)) +
+      geom_histogram(fill = "#18bc9c", color = "white", bins = 40) +
+      scale_x_continuous(labels = scales::dollar_format(scale_cut = scales::cut_short_scale())) +
+      theme_minimal() + 
+      theme(
+        axis.title = element_blank(), 
+        axis.text.y = element_blank(), 
+        axis.ticks.y = element_blank(), 
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        plot.margin = margin(0, 0, 0, 0, "pt")
+      )
+  })
+
+  # --- MONTE CARLO SIMULATION LOGIC RESTORED ---
+  observeEvent(input$use_seed, {
+    if (input$use_seed) shinyjs::enable("seed_val") else shinyjs::disable("seed_val")
   })
   
   observeEvent(input$run_mc, {
@@ -1062,6 +1133,7 @@ server <- function(input, output, session) {
       write.csv(out_df, file, row.names = FALSE, na = "")
     }
   )
+  
 }
 
-runApp(shinyApp(ui = ui, server = server), port = 3296, launch.browser = FALSE)
+shinyApp(ui, server)
