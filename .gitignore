@@ -1,0 +1,8 @@
+gh-token.txt
+R/
+safe/
+generated/
+synthetic/
+*.csv
+*.xlsx
+*.sqlite
