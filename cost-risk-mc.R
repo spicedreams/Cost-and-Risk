@@ -141,8 +141,6 @@ generate_report <- function(df, n_iter = 10000, seed_val = NULL) {
     is_leaf <- ifelse(is.na(node$is_leaf), 0, node$is_leaf) == 1
     is_active <- ifelse(is.na(node$is_active), 1, node$is_active)
     
-    is_treatment <- node$element_type == "Treatment" || grepl("treatment", tolower(node$title))
-    
     mc_array <- rep(0, n_iter)
     child_rows <- list()
     
@@ -191,7 +189,8 @@ generate_report <- function(df, n_iter = 10000, seed_val = NULL) {
       Level = level, Title = node$title
     )
     
-    return_mc_array <- if (is_treatment) rep(0, n_iter) else mc_array
+    # 2026-08-14T11:38+12:00 - Stop aggregation only for Treatment nodes with Active unchecked, and for no other reason
+    return_mc_array <- if (node$element_type == "Treatment" && is_active == 0) rep(0, n_iter) else mc_array
     return(list(rows = c(list(row_data), child_rows), mc_array = return_mc_array))
   }
   
@@ -283,7 +282,8 @@ ui <- fluidPage(
           
           fluidRow(
             column(6, checkboxInput("is_leaf_check", "This is a Leaf Node (Enable Estimates)", value = FALSE)),
-            column(6, div(id = "treatment_active_container", checkboxInput("chk_active_treatment", "Treatment is Active (Included in Rollup)", value = TRUE)))
+            # 2026-08-14T11:38+12:00 - Default Active checkbox to unchecked for Treatment nodes
+            column(6, div(id = "treatment_active_container", checkboxInput("chk_active_treatment", "Treatment is Active (Included in Rollup)", value = FALSE)))
           ),
           
           tags$fieldset(id = "est_fieldset",
@@ -317,7 +317,8 @@ ui <- fluidPage(
           ),
           fluidRow(
             column(6, actionButton("run_mc", "Update Dashboard", class = "btn-warning", style = "width:100%;")),
-            column(6, downloadButton("btn_export", "Export Detailed Report", class = "btn-info", style = "width:100%;"))
+            # 2026-08-14T11:38+12:00 - Change downloadButton to actionButton to enable saving directly to the R working directory
+            column(6, actionButton("btn_export", "Export Detailed Report", class = "btn-info", style = "width:100%;"))
           ),
           hr(),
           fluidRow(
@@ -386,7 +387,6 @@ server <- function(input, output, session) {
     paste("Active DB:", basename(rv$db_path))
   })
 
-  # --- DB BROWSER RESTORED ---
   observeEvent(input$project_db_select, {
     showModal(modalDialog(
       title = "Select Project Database",
@@ -526,7 +526,6 @@ server <- function(input, output, session) {
     removeModal()
   })
 
-  # --- COPY-PASTE ESTIMATE RESTORED ---
   observeEvent(input$pasted_estimates, {
     txt <- input$pasted_estimates
     parts <- strsplit(txt, "\t")[[1]]
@@ -592,7 +591,7 @@ server <- function(input, output, session) {
     }
   })
   
-# Tree Rendering
+  # Tree Rendering
   output$wbs_tree <- renderTree({
     trigger_refresh()
     req(rv$db_path)
@@ -628,8 +627,7 @@ server <- function(input, output, session) {
     
     return(tree_data)
   })
-
-  # Node Selection Logic
+  
   observeEvent(input$wbs_tree, {
     req(input$wbs_tree)
     sel_id <- find_selected_node(input$wbs_tree)
@@ -657,7 +655,7 @@ server <- function(input, output, session) {
           
           if (node_data$element_type[1] == "Treatment") {
             shinyjs::show("treatment_active_container")
-            updateCheckboxInput(session, "chk_active_treatment", value = ifelse(is.na(node_data$is_active[1]), 1, node_data$is_active[1]) == 1)
+            updateCheckboxInput(session, "chk_active_treatment", value = ifelse(is.na(node_data$is_active[1]), 0, node_data$is_active[1]) == 1)
           } else {
             shinyjs::hide("treatment_active_container")
           }
@@ -704,12 +702,10 @@ server <- function(input, output, session) {
     paste("Last Updated:", upd)
   })
   
-  # --- SAFE LEAF DELETION LOGIC RESTORED ---
   observeEvent(input$is_leaf_check, {
     req(selected_node_id())
     if (input$is_leaf_check != rv$current_leaf_state) {
       if (!input$is_leaf_check) {
-        # Unchecking a leaf node clears its estimates
         showModal(modalDialog(
           title = "Remove Leaf Status?",
           "Unchecking this will remove leaf status and clear all estimates. Continue?",
@@ -719,7 +715,6 @@ server <- function(input, output, session) {
           )
         ))
       } else {
-        # Simply checking it
         rv$current_leaf_state <- TRUE
         con <- get_db()
         dbExecute(con, "UPDATE financial_elements SET is_leaf = 1 WHERE id = ?", params = list(selected_node_id()))
@@ -752,7 +747,6 @@ server <- function(input, output, session) {
     trigger_refresh(trigger_refresh() + 1)
   })
 
-  # --- CASCADING TREATMENT DEACTIVATION RESTORED ---
   observeEvent(input$chk_active_treatment, {
     req(selected_node_id())
     con <- get_db()
@@ -762,7 +756,6 @@ server <- function(input, output, session) {
       new_val <- ifelse(input$chk_active_treatment, 1, 0)
       dbExecute(con, "UPDATE financial_elements SET is_active = ? WHERE id = ?", params = list(new_val, selected_node_id()))
       
-      # Cascading Deactivation Downwards
       if (new_val == 0) {
         ids_to_update <- c()
         current_parents <- c(selected_node_id())
@@ -789,7 +782,6 @@ server <- function(input, output, session) {
     dbDisconnect(con)
   }, ignoreInit = TRUE)
   
-  # --- ROBUST SAVE ESTIMATE RESTORED ---
   observeEvent(input$btn_save_est, {
     req(selected_node_id())
     
@@ -803,7 +795,6 @@ server <- function(input, output, session) {
     dbExecute(con, "UPDATE financial_elements SET opt_val = ?, likely_val = ?, pess_val = ?, chance = ?, owner = ?, updated_at = ? WHERE id = ?", 
               params = list(input$est_opt, input$est_likely, input$est_pess, input$est_chance, trimws(input$est_owner), update_time, selected_node_id()))
     
-    # Check parent ID to automatically focus parent node on success
     parent_id <- dbGetQuery(con, "SELECT parent_id FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$parent_id
     dbDisconnect(con)
     
@@ -816,7 +807,6 @@ server <- function(input, output, session) {
     }
   })
 
-  # --- CRUD OPERATIONS RESTORED ---
   observeEvent(input$btn_edit_node, {
     if (is.null(selected_node_id())) { showNotification("Please select a node to edit.", type = "warning"); return() }
     con <- get_db()
@@ -844,6 +834,11 @@ server <- function(input, output, session) {
     if (new_title == "") { showNotification("Name cannot be blank.", type = "error"); return() }
     
     new_type <- if (!is.null(input$node_type_input)) input$node_type_input else "Cost"
+    
+    # 2026-08-14T11:38+12:00 - Warn user on edit if name contains 'treatment' but element type is not 'Treatment'
+    if (grepl("(?i)treatment", new_title) && new_type != "Treatment") {
+      showNotification("Warning: Node name contains 'Treatment' but element type is not 'Treatment'.", type = "warning", duration = 10)
+    }
     
     con <- get_db()
     dbExecute(con, "UPDATE financial_elements SET title = ?, element_type = ? WHERE id = ?", params = list(new_title, new_type, selected_node_id()))
@@ -963,12 +958,21 @@ server <- function(input, output, session) {
   
   observeEvent(input$save_child, {
     if (trimws(input$new_title) == "") { showNotification("Title cannot be blank.", type = "error"); return() }
+    
+    # 2026-08-14T11:38+12:00 - Warn user if name contains 'treatment' but element type is not 'Treatment'
+    if (grepl("(?i)treatment", input$new_title) && input$new_type != "Treatment") {
+      showNotification("Warning: Node name contains 'Treatment' but element type is not 'Treatment'.", type = "warning", duration = 10)
+    }
+    
     con <- get_db()
     new_id <- generate_id()
     update_time <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
     
-    dbExecute(con, "INSERT INTO financial_elements (id, parent_id, element_type, title, chance, is_leaf, is_active, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)",
-              params = list(new_id, selected_node_id(), input$new_type, trimws(input$new_title), 100, 0, update_time))
+    # 2026-08-14T11:38+12:00 - Default Treatment nodes to inactive (0) in the database upon creation
+    init_active <- ifelse(input$new_type == "Treatment", 0, 1)
+    
+    dbExecute(con, "INSERT INTO financial_elements (id, parent_id, element_type, title, chance, is_leaf, is_active, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+              params = list(new_id, selected_node_id(), input$new_type, trimws(input$new_title), 100, 0, init_active, update_time))
     
     dbDisconnect(con)
     removeModal()
@@ -979,7 +983,6 @@ server <- function(input, output, session) {
     shinyjs::runjs("setTimeout(function() { $('#is_leaf_check').focus(); }, 800);")
   })
 
-  # --- NODE MINI PLOT RESTORED ---
   output$node_mini_plot <- renderPlot({
     trigger_refresh() 
     req(selected_node_id())
@@ -1027,7 +1030,6 @@ server <- function(input, output, session) {
       )
   })
 
-  # --- MONTE CARLO SIMULATION LOGIC RESTORED ---
   observeEvent(input$use_seed, {
     if (input$use_seed) shinyjs::enable("seed_val") else shinyjs::disable("seed_val")
   })
@@ -1121,19 +1123,23 @@ server <- function(input, output, session) {
     )
   }, striped = TRUE, hover = TRUE, width = "100%")
   
-  output$btn_export <- downloadHandler(
-    filename = function() { paste("wbs-risk-report-", format(Sys.time(), "%Y%m%d-%H%M"), ".csv", sep="") },
-    content = function(file) {
-      con <- get_db()
-      df <- dbGetQuery(con, "SELECT * FROM financial_elements")
-      dbDisconnect(con)
-      seed_num <- suppressWarnings(as.numeric(input$seed_val))
-      seed_to_use <- if (input$use_seed && !is.na(seed_num)) seed_num else NULL
-      out_df <- generate_report(df, n_iter = input$iterations, seed_val = seed_to_use)
-      write.csv(out_df, file, row.names = FALSE, na = "")
-    }
-  )
+  # 2026-08-14T11:38+12:00 - Save the report directly to the directory from which the R programme was run
+  observeEvent(input$btn_export, {
+    con <- get_db()
+    df <- dbGetQuery(con, "SELECT * FROM financial_elements")
+    dbDisconnect(con)
+    seed_num <- suppressWarnings(as.numeric(input$seed_val))
+    seed_to_use <- if (input$use_seed && !is.na(seed_num)) seed_num else NULL
+    out_df <- generate_report(df, n_iter = input$iterations, seed_val = seed_to_use)
+    
+    filename <- paste0("wbs-risk-report-", format(Sys.time(), "%Y%m%d-%H%M"), ".csv")
+    filepath <- file.path(getwd(), filename)
+    write.csv(out_df, filepath, row.names = FALSE, na = "")
+    
+    showNotification(paste("Report saved locally to:", filepath), type = "message", duration = 8)
+  })
   
 }
 
-shinyApp(ui, server)
+# 2026-08-14T11:38+12:00 - Fix the listening port to 3296 so it does not change between builds or runs
+shinyApp(ui, server, options = list(port = 3296))
