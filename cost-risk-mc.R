@@ -1010,8 +1010,7 @@ server <- function(input, output, session) {
     
     plot_df <- data.frame(Value = mc_array)
     
-    if (node_data$element_type[1] %in% c("Risk", "Issue") && prob_decimal < 1) {
-      plot_df <- plot_df[plot_df$Value != 0, , drop = FALSE]
+if (node_data$element_type[1] %in% c("Risk", "Issue", "Residual") && prob_decimal < 1) {          plot_df <- plot_df[plot_df$Value != 0, , drop = FALSE]
     }
     
     if (nrow(plot_df) == 0) return(NULL)
