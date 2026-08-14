@@ -129,6 +129,69 @@ find_selected_node <- function(tree) {
   return(NULL)
 }
 
+collect_descendants <- function(df, node_id) {
+  if (is.null(node_id) || is.na(node_id) || node_id == "" || node_id == "root") return(character())
+  ids <- character()
+  current <- c(node_id)
+  while (length(current) > 0) {
+    next_ids <- df$id[!is.na(df$parent_id) & df$parent_id %in% current]
+    next_ids <- next_ids[!(next_ids %in% ids)]
+    if (length(next_ids) == 0) break
+    ids <- c(ids, next_ids)
+    current <- next_ids
+  }
+  unique(ids)
+}
+
+node_is_issue_in_risk_tree <- function(df, node_id) {
+  if (is.null(node_id) || is.na(node_id) || node_id == "" || node_id == "root") return(FALSE)
+  node_row <- df[df$id == node_id, , drop = FALSE]
+  if (nrow(node_row) == 0 || node_row$element_type[1] != "Issue") return(FALSE)
+
+  current <- node_id
+  seen <- character()
+  has_issue_ancestor <- FALSE
+  while (!is.na(current) && current != "" && !(current %in% seen)) {
+    seen <- c(seen, current)
+    row <- df[df$id == current, , drop = FALSE]
+    if (nrow(row) > 0) {
+      if (row$element_type[1] == "Issue" && current != node_id) {
+        has_issue_ancestor <- TRUE
+      }
+      current <- row$parent_id[1]
+    } else {
+      current <- NA
+    }
+  }
+
+  !has_issue_ancestor
+}
+
+build_issue_candidate_tree <- function(df, parent = NA, excluded_ids = character()) {
+  if (is.na(parent)) {
+    children <- df[df$element_type == "Issue" & (is.na(df$parent_id) | df$parent_id == ""), , drop = FALSE]
+  } else {
+    children <- df[df$element_type == "Issue" & !is.na(df$parent_id) & df$parent_id == parent, , drop = FALSE]
+  }
+
+  if (nrow(children) == 0) return("")
+
+  res <- list()
+  for (i in seq_len(nrow(children))) {
+    node_id <- children$id[i]
+    if (node_id %in% excluded_ids) next
+
+    child_node <- build_issue_candidate_tree(df, node_id, excluded_ids)
+    attr(child_node, "stclass") <- paste0("node_", node_id)
+    attr(child_node, "sticon") <- "fa fa-fire"
+    attr(child_node, "stopened") <- TRUE
+    res[[children$title[i]]] <- child_node
+  }
+
+  if (length(res) == 0) return("")
+  res
+}
+
 generate_report <- function(df, n_iter = 10000, seed_val = NULL) {
   if (nrow(df) == 0) return(data.frame())
   if (!is.null(seed_val) && !is.na(seed_val)) set.seed(seed_val) else set.seed(NULL)
@@ -791,14 +854,24 @@ server <- function(input, output, session) {
     }
     
     con <- get_db()
+    node_state <- dbGetQuery(con, "SELECT element_type, chance FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
+    current_type <- if (nrow(node_state) > 0) node_state$element_type[1] else "Cost"
     update_time <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    dbExecute(con, "UPDATE financial_elements SET opt_val = ?, likely_val = ?, pess_val = ?, chance = ?, owner = ?, updated_at = ? WHERE id = ?", 
-              params = list(input$est_opt, input$est_likely, input$est_pess, input$est_chance, trimws(input$est_owner), update_time, selected_node_id()))
+    new_type <- current_type
+    if (current_type == "Risk" && !is.na(input$est_chance) && as.numeric(input$est_chance) >= 100) {
+      new_type <- "Issue"
+    }
+    dbExecute(con, "UPDATE financial_elements SET opt_val = ?, likely_val = ?, pess_val = ?, chance = ?, owner = ?, element_type = ?, updated_at = ? WHERE id = ?", 
+              params = list(input$est_opt, input$est_likely, input$est_pess, input$est_chance, trimws(input$est_owner), new_type, update_time, selected_node_id()))
     
     parent_id <- dbGetQuery(con, "SELECT parent_id FROM financial_elements WHERE id = ?", params = list(selected_node_id()))$parent_id
     dbDisconnect(con)
     
-    showNotification("Estimates saved successfully", type = "message")
+    if (current_type == "Risk" && !is.na(input$est_chance) && as.numeric(input$est_chance) >= 100) {
+      showNotification("This Risk reached 100% probability and has been converted to an Issue. Use Edit Node to move it to the Issue tree.", type = "message", duration = 10)
+    } else {
+      showNotification("Estimates saved successfully", type = "message")
+    }
     output$meta_updated <- renderText({ paste("Last Updated:", update_time) })
     
     if (!is.na(parent_id) && parent_id != "") {
@@ -810,8 +883,18 @@ server <- function(input, output, session) {
   observeEvent(input$btn_edit_node, {
     if (is.null(selected_node_id())) { showNotification("Please select a node to edit.", type = "warning"); return() }
     con <- get_db()
-    node_info <- dbGetQuery(con, "SELECT title, element_type FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
+    node_info <- dbGetQuery(con, "SELECT title, element_type, parent_id FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
+    df <- dbGetQuery(con, "SELECT id, parent_id, element_type, title FROM financial_elements")
     dbDisconnect(con)
+
+    issue_move_ui <- NULL
+    if (node_is_issue_in_risk_tree(df, selected_node_id())) {
+      issue_move_ui <- tagList(
+        hr(),
+        div(style = "margin-top: 8px; margin-bottom: 8px; font-weight: 600;", "Move to an existing Issue-tree parent"),
+        shinyTree("issue_move_tree")
+      )
+    }
     
     showModal(modalDialog(
       title = ifelse(selected_node_id() == "root", "Edit Project Name", "Edit Node"),
@@ -821,26 +904,75 @@ server <- function(input, output, session) {
                     choices = c("Cost", "Risk", "Issue", "Benefit", "Treatment", "Residual"), 
                     selected = node_info$element_type[1])
       },
+      issue_move_ui,
       footer = tagList(
+        if (!is.null(issue_move_ui)) actionButton("move_node_to_issue_tree", "Move to Issue Tree", class = "btn-warning"),
         modalButton("Cancel"),
         actionButton("save_node_name", "Save", class = "btn-success")
       )
     ))
     shinyjs::runjs("setTimeout(function() { $('#node_name_input').focus().select(); }, 500);")
   })
+
+  output$issue_move_tree <- renderTree({
+    req(selected_node_id())
+    con <- get_db()
+    df <- dbGetQuery(con, "SELECT id, parent_id, element_type, title FROM financial_elements")
+    dbDisconnect(con)
+
+    if (!node_is_issue_in_risk_tree(df, selected_node_id())) return(list())
+
+    excluded_ids <- c(selected_node_id(), collect_descendants(df, selected_node_id()))
+    tree_data <- build_issue_candidate_tree(df, parent = NA, excluded_ids = excluded_ids)
+    if (length(tree_data) == 0 || identical(tree_data, "")) return(list())
+    tree_data
+  })
+
+  observeEvent(input$move_node_to_issue_tree, {
+    req(selected_node_id())
+    con <- get_db()
+    df <- dbGetQuery(con, "SELECT id, parent_id, element_type, title FROM financial_elements")
+    target_id <- find_selected_node(input$issue_move_tree)
+    dbDisconnect(con)
+
+    if (is.null(target_id) || length(target_id) == 0 || target_id == "") {
+      showNotification("Please select a target parent in the Issue tree first.", type = "warning")
+      return()
+    }
+
+    if (target_id %in% c(selected_node_id(), collect_descendants(df, selected_node_id()))) {
+      showNotification("A node cannot be moved under its own descendant.", type = "error")
+      return()
+    }
+
+    con <- get_db()
+    dbExecute(con, "UPDATE financial_elements SET parent_id = ?, element_type = 'Issue' WHERE id = ?", params = list(target_id, selected_node_id()))
+    dbDisconnect(con)
+    removeModal()
+    trigger_refresh(trigger_refresh() + 1)
+    showNotification("Node moved into the Issue tree.", type = "message")
+  }, ignoreInit = TRUE)
   
   observeEvent(input$save_node_name, {
     new_title <- trimws(input$node_name_input)
     if (new_title == "") { showNotification("Name cannot be blank.", type = "error"); return() }
     
     new_type <- if (!is.null(input$node_type_input)) input$node_type_input else "Cost"
+
+    con <- get_db()
+    node_state <- dbGetQuery(con, "SELECT element_type, chance FROM financial_elements WHERE id = ?", params = list(selected_node_id()))
+    if (nrow(node_state) > 0) {
+      chance_val <- if (is.na(node_state$chance[1])) 100 else as.numeric(node_state$chance[1])
+      if (node_state$element_type[1] == "Risk" && chance_val >= 100) {
+        new_type <- "Issue"
+      }
+    }
     
     # 2026-08-14T11:38+12:00 - Warn user on edit if name contains 'treatment' but element type is not 'Treatment'
     if (grepl("(?i)treatment", new_title) && new_type != "Treatment") {
       showNotification("Warning: Node name contains 'Treatment' but element type is not 'Treatment'.", type = "warning", duration = 10)
     }
     
-    con <- get_db()
     dbExecute(con, "UPDATE financial_elements SET title = ?, element_type = ? WHERE id = ?", params = list(new_title, new_type, selected_node_id()))
     dbDisconnect(con)
     
