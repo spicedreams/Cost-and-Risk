@@ -406,39 +406,7 @@ server <- function(input, output, session) {
     focus_node_id = NULL,
     force_open_all = TRUE 
   )
-  
-  sqlite_files <- list.files(pattern = "\\.sqlite$")
-  if (length(sqlite_files) > 0) {
-    init_path <- sqlite_files[1]
-    proj_name <- gsub("\\.sqlite$", "", init_path)
-  } else {
-    proj_name <- "New Project"
-    init_path <- paste0(proj_name, ".sqlite")
-  }
-  
-  con <- dbConnect(RSQLite::SQLite(), init_path)
-  dbExecute(con, "
-    CREATE TABLE IF NOT EXISTS financial_elements (
-      id TEXT PRIMARY KEY, parent_id TEXT, element_type TEXT NOT NULL,
-      title TEXT NOT NULL, opt_val REAL, likely_val REAL, pess_val REAL
-    )")
-  
-  cols <- dbListFields(con, "financial_elements")
-  if (!"chance" %in% cols) dbExecute(con, "ALTER TABLE financial_elements ADD COLUMN chance REAL DEFAULT 100")
-  if (!"is_leaf" %in% cols) dbExecute(con, "ALTER TABLE financial_elements ADD COLUMN is_leaf INTEGER DEFAULT 0")
-  if (!"is_active" %in% cols) dbExecute(con, "ALTER TABLE financial_elements ADD COLUMN is_active INTEGER DEFAULT 1")
-  if (!"owner" %in% cols) dbExecute(con, "ALTER TABLE financial_elements ADD COLUMN owner TEXT")
-  if (!"updated_at" %in% cols) dbExecute(con, "ALTER TABLE financial_elements ADD COLUMN updated_at TEXT")
-  
-  has_root <- dbGetQuery(con, "SELECT COUNT(*) as n FROM financial_elements WHERE id = 'root'")$n
-  if (has_root == 0) {
-    update_time <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
-    dbExecute(con, "INSERT INTO financial_elements (id, parent_id, element_type, title, chance, is_leaf, is_active, updated_at) VALUES ('root', NULL, 'Cost', ?, 100, 0, 1, ?)", params = list(proj_name, update_time))
-    dbExecute(con, "UPDATE financial_elements SET parent_id = 'root' WHERE (parent_id IS NULL OR parent_id = '') AND id != 'root'")
-  }
-  dbDisconnect(con)
-  
-  rv$db_path <- init_path
+
   get_db <- function() { dbConnect(RSQLite::SQLite(), rv$db_path) }
   
   trigger_refresh <- reactiveVal(0)
@@ -446,7 +414,7 @@ server <- function(input, output, session) {
   browse_dir <- reactiveVal(getwd())
   
   output$current_db_display <- renderText({
-    req(rv$db_path)
+    if (is.null(rv$db_path)) return("No project database selected.")
     paste("Active DB:", basename(rv$db_path))
   })
 
@@ -531,7 +499,7 @@ server <- function(input, output, session) {
   
   observeEvent(input$btn_confirm_db, {
     idx <- input$file_browser_table_rows_selected
-    if (is.null(idx)) {
+    if (length(idx) != 1) {
        showNotification("Please select a file.", type = "warning")
        return()
     }
@@ -545,7 +513,7 @@ server <- function(input, output, session) {
     }
     
     new_path <- row$Path
-    if (new_path == rv$db_path) {
+    if (!is.null(rv$db_path) && new_path == rv$db_path) {
       removeModal()
       return()
     }
@@ -1166,6 +1134,7 @@ if (node_data$element_type[1] %in% c("Risk", "Issue", "Residual") && prob_decima
   })
   
   observeEvent(input$run_mc, {
+    req(rv$db_path)
     con <- get_db()
     df <- dbGetQuery(con, "SELECT * FROM financial_elements")
     dbDisconnect(con)
@@ -1256,6 +1225,7 @@ if (node_data$element_type[1] %in% c("Risk", "Issue", "Residual") && prob_decima
   
   # 2026-08-14T11:38+12:00 - Save the report directly to the directory from which the R programme was run
   observeEvent(input$btn_export, {
+    req(rv$db_path)
     con <- get_db()
     df <- dbGetQuery(con, "SELECT * FROM financial_elements")
     dbDisconnect(con)
