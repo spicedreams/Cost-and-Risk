@@ -1,7 +1,7 @@
 # ==========================================
 # 0. SMART PACKAGE INSTALLATION & LOADING
 # ==========================================
-req_pkgs <- c("shiny", "bslib", "shinyTree", "DBI", "RSQLite", "ggplot2", "shinyjs", "shinyWidgets", "DT")
+req_pkgs <- c("shiny", "bslib", "shinyTree", "DBI", "RSQLite", "ggplot2", "shinyjs", "shinyWidgets", "DT", "shinyFiles")
 missing_pkgs <- req_pkgs[!(req_pkgs %in% installed.packages()[,"Package"])]
 
 if (length(missing_pkgs) > 0) {
@@ -323,7 +323,11 @@ ui <- fluidPage(
     sidebarPanel(
       width = 5,
       h4("Project Explorer"),
-      actionButton("project_db_select", "Browse for Project DB...", icon = icon("folder-open"), class = "btn-outline-primary", width = "100%"),
+	  fluidRow(
+        column(6, actionButton("project_db_select", "Browse DB", icon = icon("folder-open"), class = "btn-outline-primary", width = "100%", style = "padding: 5px;")),
+        column(6, actionButton("btn_new_project", "New DB", icon = icon("plus"), class = "btn-success", width = "100%", style = "padding: 5px;"))
+      ),
+      # actionButton("project_db_select", "Browse for Project DB...", icon = icon("folder-open"), class = "btn-outline-primary", width = "100%"),
       div(style = "margin-top: 10px; margin-bottom: 15px; font-weight: bold; word-wrap: break-word;", textOutput("current_db_display")),
       actionButton("btn_edit_node", "Edit Node", icon = icon("edit"), class = "btn-secondary btn-sm mb-2"),
       actionButton("btn_add_node", "Add Child Node", icon = icon("plus"), class = "btn-primary btn-sm mb-2"),
@@ -555,6 +559,100 @@ server <- function(input, output, session) {
     
     trigger_refresh(trigger_refresh() + 1)
     removeModal()
+  })
+
+# ==========================================
+  # NEW PROJECT DB CREATION LOGIC
+  # ==========================================
+  
+# 1. FIX: Evaluate getVolumes() to a vector and prepend the current directory
+  volumes <- c("Current Directory" = getwd(), shinyFiles::getVolumes()())
+  shinyDirChoose(input, "new_proj_dir", roots = volumes, session = session)
+  
+  selected_create_path <- reactiveVal(NULL)
+  
+  observe({
+    if (!is.integer(input$new_proj_dir)) {
+      path <- parseDirPath(volumes, input$new_proj_dir)
+      selected_create_path(path)
+    }
+  })
+  
+  observeEvent(input$btn_new_project, {
+    showModal(modalDialog(
+      title = "Create New Project Database",
+      textInput("new_proj_name", "Project Name", placeholder = "e.g., Enterprise ERP"),
+      textInput("new_proj_file", "Database File Name", value = paste0("project_", format(Sys.Date(), "%Y%m%d"), ".sqlite")),
+      
+      tags$label("Destination Folder:"),
+      br(),
+      shinyDirButton("new_proj_dir", "Select Folder", "Please select a destination folder", class = "btn-info"),
+      verbatimTextOutput("selected_dir_path"),
+      
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("btn_execute_create", "Create & Load DB", class = "btn-primary")
+      )
+    ))
+  })
+  
+  # 2. FIX: Prevent "character(0)" by using cat() and checking length
+  output$selected_dir_path <- renderPrint({
+    path <- selected_create_path()
+    if (is.null(path) || length(path) == 0) {
+      cat("No folder selected.")
+    } else {
+      cat(path)
+    }
+  })
+
+  observeEvent(input$btn_execute_create, {
+    req(input$new_proj_name, input$new_proj_file, selected_create_path())
+    
+    full_path <- file.path(selected_create_path(), input$new_proj_file)
+    
+    if (file.exists(full_path)) {
+      showNotification("A file with this name already exists in the selected folder.", type = "error")
+      return()
+    }
+    
+    tryCatch({
+      con <- dbConnect(RSQLite::SQLite(), full_path)
+      
+      # Build the schema matching the current single-table structure to ensure compatibility
+      dbExecute(con, "
+        CREATE TABLE IF NOT EXISTS financial_elements (
+          id TEXT PRIMARY KEY, parent_id TEXT, element_type TEXT NOT NULL,
+          title TEXT NOT NULL, opt_val REAL, likely_val REAL, pess_val REAL,
+          chance REAL DEFAULT 100, is_leaf INTEGER DEFAULT 0,
+          is_active INTEGER DEFAULT 1, owner TEXT, updated_at TEXT
+        )")
+      
+      # Seed the master root node
+      update_time <- format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+      dbExecute(con, "INSERT INTO financial_elements (id, parent_id, element_type, title, chance, is_leaf, is_active, updated_at) VALUES ('root', NULL, 'Cost', ?, 100, 0, 1, ?)", 
+                params = list(trimws(input$new_proj_name), update_time))
+      
+      dbDisconnect(con)
+      
+      # Hand over the newly created database to the active session
+      rv$db_path <- full_path
+      rv$focus_node_id <- NULL
+      selected_node_id(NULL)
+      rv$current_leaf_state <- FALSE
+      updateCheckboxInput(session, "is_leaf_check", value = FALSE)
+      shinyjs::disable("is_leaf_check")
+      shinyjs::disable("est_fieldset")
+      shinyjs::hide("treatment_active_container")
+      rv$mc_results <- NULL
+      
+      trigger_refresh(trigger_refresh() + 1)
+      removeModal()
+      showNotification(paste("Database created and loaded:", basename(full_path)), type = "message")
+      
+    }, error = function(e) {
+      showNotification(paste("Error creating database:", e$message), type = "error")
+    })
   })
 
   observeEvent(input$pasted_estimates, {
