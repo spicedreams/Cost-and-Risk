@@ -6,3 +6,7 @@ synthetic/
 *.csv
 *.xlsx
 *.sqlite
+R-portable-dont-use/
+cost-risk-mc-R.losing-it
+losing-it.diff
+unused-instructions.md
