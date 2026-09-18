@@ -327,7 +327,6 @@ ui <- fluidPage(
         column(6, actionButton("project_db_select", "Browse DB", icon = icon("folder-open"), class = "btn-outline-primary", width = "100%", style = "padding: 5px;")),
         column(6, actionButton("btn_new_project", "New DB", icon = icon("plus"), class = "btn-success", width = "100%", style = "padding: 5px;"))
       ),
-      # actionButton("project_db_select", "Browse for Project DB...", icon = icon("folder-open"), class = "btn-outline-primary", width = "100%"),
       div(style = "margin-top: 10px; margin-bottom: 15px; font-weight: bold; word-wrap: break-word;", textOutput("current_db_display")),
       actionButton("btn_edit_node", "Edit Node", icon = icon("edit"), class = "btn-secondary btn-sm mb-2"),
       actionButton("btn_add_node", "Add Child Node", icon = icon("plus"), class = "btn-primary btn-sm mb-2"),
@@ -411,7 +410,12 @@ server <- function(input, output, session) {
     force_open_all = TRUE 
   )
 
-  get_db <- function() { dbConnect(RSQLite::SQLite(), rv$db_path) }
+  get_db <- function() { 
+    con <- dbConnect(RSQLite::SQLite(), rv$db_path)
+    dbExecute(con, "PRAGMA journal_mode=DELETE;")
+    dbExecute(con, "PRAGMA busy_timeout=5000;")
+    con
+  }
   
   trigger_refresh <- reactiveVal(0)
   selected_node_id <- reactiveVal(NULL)
@@ -525,6 +529,8 @@ server <- function(input, output, session) {
     proj_name <- gsub("\\.sqlite$|\\.db$", "", basename(new_path))
     
     con <- dbConnect(RSQLite::SQLite(), new_path)
+    dbExecute(con, "PRAGMA journal_mode=DELETE;")
+    dbExecute(con, "PRAGMA busy_timeout=5000;")
     dbExecute(con, "
       CREATE TABLE IF NOT EXISTS financial_elements (
         id TEXT PRIMARY KEY, parent_id TEXT, element_type TEXT NOT NULL,
@@ -618,6 +624,8 @@ server <- function(input, output, session) {
     
     tryCatch({
       con <- dbConnect(RSQLite::SQLite(), full_path)
+      dbExecute(con, "PRAGMA journal_mode=DELETE;")
+      dbExecute(con, "PRAGMA busy_timeout=5000;")
       
       # Build the schema matching the current single-table structure to ensure compatibility
       dbExecute(con, "
