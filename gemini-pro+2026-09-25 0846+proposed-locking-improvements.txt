@@ -1,0 +1,209 @@
+To implement the Check-Out / Check-In model robustly, we must apply the OS-level atomic lock to a fixed directory name (e.g., project.sqlite.lockdir). If we included the username directly in the directory name itself, we would have to search for unknown lock names before creating one, which reintroduces the exact race condition we are trying to avoid.
+
+To give you the visibility you need safely, the code below atomically creates the .lockdir, and upon winning that race, writes a file inside it explicitly named locked_by_[USERNAME].txt.
+
+Here are the specific updates to Section 1 and Section 3 of your code.
+
+1. Replace the Locking Helper Functions
+In Section 1. HELPER FUNCTIONS & MATH ENGINE, replace the old acquire_db_lock and release_db_lock functions with these three new functions:
+
+R
+acquire_db_lock <- function(network_path, rv) {
+  if (is.null(network_path) || network_path == "") return(FALSE)
+  
+  # The directory name itself is the atomic mutex. 
+  lock_dir <- paste0(network_path, ".lockdir")
+  
+  # suppressWarnings prevents console spam if the directory already exists (which means it is locked)
+  success <- suppressWarnings(dir.create(lock_dir))
+  
+  if (success) {
+    user_info <- Sys.info()[["user"]]
+    if (is.null(user_info) || user_info == "") user_info <- "UnknownUser"
+    
+    info_file <- file.path(lock_dir, paste0("locked_by_", user_info, ".txt"))
+    try(writeLines(paste("Locked at:", Sys.time()), info_file), silent = TRUE)
+    
+    rv$lock_dir <- lock_dir
+    return(TRUE)
+  } else {
+    # If we failed to lock, figure out who has it to warn the user
+    occupant <- "another process"
+    if (dir.exists(lock_dir)) {
+      files <- list.files(lock_dir, pattern = "^locked_by_")
+      if (length(files) > 0) {
+        occupant <- gsub("locked_by_|.txt", "", files[1])
+      }
+    }
+    showNotification(paste("Database is locked by:", occupant), type = "error", duration = 8)
+    return(FALSE)
+  }
+}
+
+release_db_lock <- function(rv) {
+  if (!is.null(rv$lock_dir) && dir.exists(rv$lock_dir)) {
+    unlink(rv$lock_dir, recursive = TRUE)
+  }
+  rv$lock_dir <- NULL
+}
+
+sync_to_network <- function(rv) {
+  # Copies local database back to the network and deletes local temp to avoid multiple sources of truth
+  if (!is.null(rv$db_path) && !is.null(rv$network_db_path)) {
+    file.copy(from = rv$db_path, to = rv$network_db_path, overwrite = TRUE)
+    unlink(rv$db_path)
+  }
+}
+2. Update Server Reactive Values
+At the top of Section 3. SERVER LOGIC, update the rv object and session cleanups:
+
+R
+  rv <- reactiveValues(
+    mc_results = NULL, 
+    db_path = NULL,          # Local temp CPU copy
+    network_db_path = NULL,  # The permanent share location
+    lock_dir = NULL, 
+    current_leaf_state = FALSE, 
+    focus_node_id = NULL,
+    force_open_all = TRUE 
+  )
+
+  reg.finalizer(session$userData, function(env) {
+    if (!is.null(rv$db_path) && !is.null(rv$network_db_path)) {
+      sync_to_network(rv)
+      release_db_lock(rv)
+    }
+  }, onexit = TRUE)
+
+  session$onSessionEnded(function() {
+    if (!is.null(rv$db_path) && !is.null(rv$network_db_path)) {
+      sync_to_network(rv)
+      release_db_lock(rv)
+    }
+  })
+3. Update the btn_close_db Observer
+When a user finishes, we must trigger the sync.
+
+R
+  observeEvent(input$btn_close_db, {
+    req(rv$db_path, rv$network_db_path)
+    
+    sync_to_network(rv)
+    release_db_lock(rv)
+    
+    rv$db_path <- NULL
+    rv$network_db_path <- NULL
+    rv$focus_node_id <- NULL
+    selected_node_id(NULL)
+    rv$current_leaf_state <- FALSE
+    
+    updateCheckboxInput(session, "is_leaf_check", value = FALSE)
+    shinyjs::disable("is_leaf_check")
+    shinyjs::disable("est_fieldset")
+    shinyjs::hide("treatment_active_container")
+    rv$mc_results <- NULL
+    
+    trigger_refresh(trigger_refresh() + 1)
+    showNotification("Database successfully saved to network share and closed.", type = "message")
+  })
+4. Update the "Browse DB" (btn_confirm_db) Open Logic
+Update the database connection block to perform the check-out maneuver:
+
+R
+  observeEvent(input$btn_confirm_db, {
+    idx <- input$file_browser_table_rows_selected
+    if (length(idx) != 1) {
+       showNotification("Please select a file.", type = "warning")
+       return()
+    }
+    
+    df <- file_list_df()
+    row <- df[idx, ]
+    
+    if (row$Type == "Directory") {
+       browse_dir(row$Path)
+       return()
+    }
+    
+    new_network_path <- row$Path
+    if (!is.null(rv$network_db_path) && new_network_path == rv$network_db_path) {
+      removeModal()
+      return()
+    }
+    
+    if (!acquire_db_lock(new_network_path, rv)) {
+      # The acquire function now handles the error notification
+      return()
+    }
+    
+    # Previous network DB cleanup if switching directly without closing
+    if (!is.null(rv$network_db_path) && rv$network_db_path != new_network_path) {
+      sync_to_network(rv)
+      release_db_lock(rv)
+    }
+    
+    # ----------------------------------------------------
+    # Check-out DB to local Temp Directory
+    # ----------------------------------------------------
+    local_temp_path <- file.path(tempdir(), basename(new_network_path))
+    file.copy(from = new_network_path, to = local_temp_path, overwrite = TRUE)
+    
+    rv$network_db_path <- new_network_path
+    rv$db_path <- local_temp_path
+    
+    proj_name <- gsub("\\.sqlite$|\\.db$", "", basename(rv$db_path))
+    
+    con <- dbConnect(RSQLite::SQLite(), rv$db_path)
+    dbExecute(con, "PRAGMA journal_mode=DELETE;")
+    # ... (Keep the rest of the existing table generation and DDL logic inside this observer exactly the same) ...
+5. Update the "New DB" (btn_execute_create) Logic
+Finally, update the creation observer to build the database locally first, then push it to the network.
+
+R
+  observeEvent(input$btn_execute_create, {
+    req(input$new_proj_name, input$new_proj_file, selected_create_path())
+    
+    full_network_path <- file.path(selected_create_path(), input$new_proj_file)
+    
+    if (file.exists(full_network_path)) {
+      showNotification("A file with this name already exists in the selected folder.", type = "error")
+      return()
+    }
+    
+    if (!acquire_db_lock(full_network_path, rv)) {
+      return()
+    }
+    
+    if (!is.null(rv$network_db_path) && rv$network_db_path != full_network_path) {
+      sync_to_network(rv)
+      release_db_lock(rv)
+    }
+
+    local_temp_path <- file.path(tempdir(), input$new_proj_file)
+
+    tryCatch({
+      con <- dbConnect(RSQLite::SQLite(), local_temp_path)
+      dbExecute(con, "PRAGMA journal_mode=DELETE;")
+      dbExecute(con, "PRAGMA busy_timeout=5000;")
+      
+      # ... (Keep the existing CREATE TABLE and INSERT root node logic here) ...
+      
+      dbDisconnect(con)
+      
+      # Initial push to network share
+      file.copy(from = local_temp_path, to = full_network_path, overwrite = TRUE)
+      
+      rv$network_db_path <- full_network_path
+      rv$db_path <- local_temp_path
+      
+      # ... (Keep the existing UI reset logic here) ...
+      
+      trigger_refresh(trigger_refresh() + 1)
+      removeModal()
+      showNotification(paste("Database created locally and synced to:", basename(full_network_path)), type = "message")
+      
+    }, error = function(e) {
+      release_db_lock(rv)
+      showNotification(paste("Error creating database:", e$message), type = "error")
+    })
+  })
