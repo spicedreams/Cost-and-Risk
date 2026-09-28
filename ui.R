@@ -48,6 +48,7 @@ ui <- fluidPage(
       h4("Project Explorer"),
       uiOutput("db_controls_ui"),
       div(style = "margin-top: 10px; margin-bottom: 15px; font-weight: bold; word-wrap: break-word;", textOutput("current_db_display")),
+      actionButton("btn_import_csv", "Import CSV", icon = icon("file-csv"), class = "btn-outline-success btn-sm mb-2", style = "width: 100%;"),
       actionButton("btn_edit_node", "Edit Node", icon = icon("edit"), class = "btn-secondary btn-sm mb-2"),
       actionButton("btn_add_node", "Add Child Node", icon = icon("plus"), class = "btn-primary btn-sm mb-2"),
       actionButton("btn_delete_node", "Delete Node", icon = icon("trash"), class = "btn-danger btn-sm mb-2"),

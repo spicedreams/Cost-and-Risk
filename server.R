@@ -73,6 +73,74 @@ server <- function(input, output, session) {
     }
   })
 
+  observeEvent(input$btn_import_csv, {
+    choices <- c("Create New Database" = "new")
+    if (!is.null(rv$db_path)) {
+      choices <- c("Overwrite Currently Open Database" = "current", choices)
+    }
+    
+    showModal(modalDialog(
+      title = "Import Database from CSV",
+      fileInput("csv_import_file", "Select CSV File", accept = c(".csv")),
+      radioButtons("import_target_choice", "Import Destination", choices = choices),
+      conditionalPanel(
+        condition = "input.import_target_choice == 'new'",
+        textInput("import_new_db_name", "New Database File Name", value = paste0("imported_", format(Sys.Date(), "%Y%m%d"), ".sqlite"))
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("btn_execute_csv_import", "Execute Import", class = "btn-success")
+      )
+    ))
+  })
+
+  observeEvent(input$btn_execute_csv_import, {
+    req(input$csv_import_file)
+    csv_path <- input$csv_import_file$datapath
+    
+    target_path <- NULL
+    
+    if (input$import_target_choice == "current" && !is.null(rv$db_path)) {
+      target_path <- rv$db_path
+    } else {
+      db_name <- trimws(input$import_new_db_name)
+      if (db_name == "") db_name <- paste0("imported_", format(Sys.Date(), "%Y%m%d"), ".sqlite")
+      if (!grepl("\\.(sqlite|db)$", db_name, ignore.case = TRUE)) db_name <- paste0(db_name, ".sqlite")
+      
+      target_path <- file.path(tempdir(), db_name)
+      network_target <- file.path(getwd(), db_name)
+      
+      if (!acquire_db_lock(network_target, rv)) return()
+      rv$network_db_path <- network_target
+      rv$db_path <- target_path
+    }
+    
+    tryCatch({
+      import_csv_to_db(csv_path, target_path)
+      
+      if (!is.null(rv$network_db_path)) {
+        file.copy(from = target_path, to = rv$network_db_path, overwrite = TRUE)
+      }
+      
+      rv$focus_node_id <- NULL
+      selected_node_id(NULL)
+      rv$current_leaf_state <- FALSE
+      rv$force_open_all <- TRUE
+      
+      updateCheckboxInput(session, "is_leaf_check", value = FALSE)
+      shinyjs::disable("is_leaf_check")
+      shinyjs::disable("est_fieldset")
+      shinyjs::hide("treatment_active_container")
+      rv$mc_results <- NULL
+      
+      trigger_refresh(trigger_refresh() + 1)
+      removeModal()
+      showNotification("CSV imported and database populated successfully.", type = "message")
+    }, error = function(e) {
+      showNotification(paste("Error importing CSV:", e$message), type = "error")
+    })
+  })
+
   observeEvent(input$btn_close_db, {
     req(rv$db_path, rv$network_db_path)
     
